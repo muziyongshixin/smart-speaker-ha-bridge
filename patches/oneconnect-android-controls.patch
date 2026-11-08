@@ -1,0 +1,418 @@
+--- a/custom_components/oneconnect_bridge/business/entity_mapping.py
++++ b/custom_components/oneconnect_bridge/business/entity_mapping.py
+@@ -174,6 +174,8 @@
+         child = _build_product_child(
+             entity_id, display_name, _light_product_id(dict(attributes or {}))
+         )
++    elif domain in {"climate", "vacuum"}:
++        child = _build_product_child(entity_id, display_name, "ZG2R")
+     elif domain == "lock":
+         child = _build_lock_child(entity_id, display_name)
+     elif domain in _STATE_DOMAINS:
+@@ -182,6 +184,18 @@
+         child = _build_media_player_child(entity_id, display_name)
+     else:  # script / scene / button / input_button: 常关显示 + 命令触发
+         child = _build_momentary_child(entity_id, display_name)
++    if domain in {"climate", "vacuum"}:
++        on_binding = next(
++            binding["fields"]["on"]
++            for binding in child["bindings"] if "on" in binding["fields"]
++        )
++        on_binding["ha_to_huawei"]["map"] = (
++            {"off": 0, "heat": 1, "cool": 1, "auto": 1,
++             "heat_cool": 1, "dry": 1, "fan_only": 1}
++            if domain == "climate"
++            else {"cleaning": 1, "on": 1, "returning": 0,
++                  "docked": 0, "idle": 0, "paused": 0, "error": 0, "off": 0}
++        )
+     child[MANAGED_BY_FIELD] = MANAGED_BY
+     return child
+ 
+--- a/custom_components/oneconnect_bridge/config_flow.py
++++ b/custom_components/oneconnect_bridge/config_flow.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ 
+ import secrets
++import re
+ import socket
+ from pathlib import Path
+ from typing import Any
+@@ -38,7 +39,12 @@
+     return options
+ 
+ 
+-def _interface_mac(interface_ip: str) -> str:
++def _interface_mac(interface_ip: str, manual_mac: str | None = None) -> str:
++    if manual_mac:
++        value = manual_mac.strip().replace(":", "").replace("-", "").upper()
++        if not re.fullmatch(r"[0-9A-F]{12}", value) or value in {"000000000000", "FFFFFFFFFFFF", "020000000000"} or int(value[:2], 16) & 1:
++            raise ValueError("invalid unicast interface MAC address")
++        return value
+     for _name, addresses in psutil.net_if_addrs().items():
+         ipv4 = {address.address for address in addresses if address.family == socket.AF_INET}
+         if interface_ip not in ipv4:
+@@ -66,7 +72,7 @@
+             interface_ip = user_input[CONF_INTERFACE_IP]
+             try:
+                 mac = await self.hass.async_add_executor_job(
+-                    _interface_mac, interface_ip
++                    _interface_mac, interface_ip, user_input.get(CONF_MAC)
+                 )
+             except ValueError:
+                 errors[CONF_INTERFACE_IP] = "mac_not_found"
+@@ -86,7 +92,7 @@
+         return self.async_show_form(
+             step_id="user",
+             data_schema=vol.Schema(
+-                {vol.Required(CONF_INTERFACE_IP): vol.In(options)}
++                {vol.Required(CONF_INTERFACE_IP): vol.In(options), vol.Optional(CONF_MAC): str}
+             ),
+             errors=errors,
+         )
+@@ -129,7 +135,9 @@
+         options = await self.hass.async_add_executor_job(_interface_options)
+         if user_input is not None:
+             interface_ip = user_input[CONF_INTERFACE_IP]
+-            mac = await self.hass.async_add_executor_job(_interface_mac, interface_ip)
++            mac = await self.hass.async_add_executor_job(
++                _interface_mac, interface_ip, user_input.get(CONF_MAC)
++            )
+             return self.async_create_entry(
+                 title="",
+                 data={CONF_INTERFACE_IP: interface_ip, CONF_MAC: mac},
+@@ -141,7 +149,8 @@
+                     vol.Required(
+                         CONF_INTERFACE_IP,
+                         default=self._entry.data.get(CONF_INTERFACE_IP),
+-                    ): vol.In(options)
++                    ): vol.In(options),
++                    vol.Optional(CONF_MAC, default=self._entry.options.get(CONF_MAC, self._entry.data.get(CONF_MAC, ""))): str
+                 }
+             ),
+         )
+--- a/custom_components/oneconnect_bridge/const.py
++++ b/custom_components/oneconnect_bridge/const.py
+@@ -41,6 +41,8 @@
+     "siren",
+     "valve",
+     "water_heater",
++    "climate",
++    "vacuum",
+ )
+ 
+ # Keep local/cloud abuse-prevention limits fixed.
+--- a/custom_components/oneconnect_bridge/default_mapping.yaml
++++ b/custom_components/oneconnect_bridge/default_mapping.yaml
+@@ -1,40 +1,23 @@
+-# 这是每个网关首次添加时复制到其 .storage 目录的样品配置。
+-#
+-# 默认开启。首次复制后会加载预置子设备模型；如需暂不注册，可将 enabled 改为 false。
+-# identity、SN、UDID、devId 和认证材料由运行时生成并持久化，不写入这里。
+-# 关键字段：
+-# schema: 固定为 1；enabled: false 不加载，true 才编译并注册子设备。
+-# gateway_serial: 网关上下文记录，可留空；文件所在的网关目录才是实际隔离边界。
+-# children.<key>: 子设备稳定键；display.friendly_name/room 为云端显示名称和房间。
+-# lifecycle.on_product_change: block 阻止换型，replace 注册新模型后删除旧子设备。
+-# product.ref: 必须引用 catalog.yaml 中的产品；services 用 st/sid 选择华为服务。
+-# bindings: 将 HA 实体字段绑定到华为服务字段；sid 必须对应 services 中的 sid。
+-# source 可为 state、attribute、constant、command；attribute 使用 attribute，constant 使用 value。
+-# entity_id 指 HA 实体；component 仅支持 red、green、blue；两个 *_to_* 字段声明值转换。
+-
+ schema: 1
+ enabled: true
+ gateway_serial: ""
+-
+ children:
+-  oslo_one_key_switch:
++  bridge_test:
+     lifecycle:
+       on_product_change: block
+     display:
+-      friendly_name: "奥斯陆一键开关"
+-      room: "厨房"
+-
++      friendly_name: "联动测试"
++      room: "客厅"
+     product:
+       ref: ZG2R
+       services:
+         - st: switch
+           sid: switch1
+-
+     bindings:
+       - sid: switch1
+         fields:
+           "on":
+-            entity_id: switch.REPLACE_WITH_KITCHEN_SWITCH
++            entity_id: input_boolean.bridge_test
+             source: state
+             ha_to_huawei:
+               type: state_map
+@@ -46,196 +29,3 @@
+               map:
+                 "0": "off"
+                 "1": "on"
+-
+-  monochrome_ceiling_lamp:
+-    lifecycle:
+-      on_product_change: block
+-    display:
+-      friendly_name: "华为智能吸顶灯（单色）"
+-      room: "卧室"
+-
+-    product:
+-      ref: ZG0Y
+-      services:
+-        - st: switch
+-          sid: switch
+-
+-    bindings:
+-      - sid: switch
+-        fields:
+-          "on":
+-            entity_id: light.REPLACE_WITH_CEILING_LAMP
+-            source: state
+-            ha_to_huawei:
+-              type: state_map
+-              map:
+-                "on": 1
+-                "off": 0
+-            huawei_to_ha:
+-              type: state_map
+-              map:
+-                "0": "off"
+-                "1": "on"
+-
+-  dimmable_lamp:
+-    lifecycle:
+-      on_product_change: block
+-    display:
+-      friendly_name: "华为调光智能灯"
+-      room: "书房"
+-
+-    product:
+-      ref: ZG14
+-      services:
+-        - st: switch
+-          sid: switch
+-        - st: brightness
+-          sid: brightness
+-
+-    bindings:
+-      - sid: switch
+-        fields:
+-          "on":
+-            entity_id: light.REPLACE_WITH_DIMMABLE_LAMP
+-            source: state
+-            ha_to_huawei:
+-              type: state_map
+-              map:
+-                "on": 1
+-                "off": 0
+-            huawei_to_ha:
+-              type: state_map
+-              map:
+-                "0": "off"
+-                "1": "on"
+-
+-      - sid: brightness
+-        fields:
+-          brightness:
+-            entity_id: light.REPLACE_WITH_DIMMABLE_LAMP
+-            source: attribute
+-            attribute: brightness
+-
+-  color_ceiling_lamp:
+-    lifecycle:
+-      on_product_change: block
+-    display:
+-      friendly_name: "华为调光调色吸顶灯"
+-      room: "餐厅"
+-
+-    product:
+-      ref: ZG2I
+-      services:
+-        - st: switch
+-          sid: switch
+-        - st: brightness
+-          sid: brightness
+-        - st: cct
+-          sid: cct
+-
+-    bindings:
+-      - sid: switch
+-        fields:
+-          "on":
+-            entity_id: light.REPLACE_WITH_COLOR_CEILING_LAMP
+-            source: state
+-            ha_to_huawei:
+-              type: state_map
+-              map:
+-                "on": 1
+-                "off": 0
+-            huawei_to_ha:
+-              type: state_map
+-              map:
+-                "0": "off"
+-                "1": "on"
+-
+-      - sid: brightness
+-        fields:
+-          brightness:
+-            entity_id: light.REPLACE_WITH_COLOR_CEILING_LAMP
+-            source: attribute
+-            attribute: brightness
+-
+-      - sid: cct
+-        fields:
+-          colorTemperature:
+-            entity_id: light.REPLACE_WITH_COLOR_CEILING_LAMP
+-            source: attribute
+-            attribute: color_temp_kelvin
+-
+-  living_room_rgbcw_driver:
+-    lifecycle:
+-      on_product_change: block
+-    display:
+-      friendly_name: "客厅 RGBCW 智能灯"
+-      room: "客厅"
+-
+-    product:
+-      ref: ZG0O
+-      services:
+-        - st: subProduct
+-          sid: subProduct
+-        - st: switch
+-          sid: switch
+-        - st: brightness
+-          sid: brightness
+-        - st: cct
+-          sid: cct
+-        - st: colour
+-          sid: colour
+-
+-    bindings:
+-      - sid: subProduct
+-        fields:
+-          subProductId:
+-            source: constant
+-            value: "05"
+-
+-      - sid: switch
+-        fields:
+-          "on":
+-            entity_id: light.REPLACE_WITH_LIVING_ROOM_LIGHT
+-            source: state
+-            ha_to_huawei:
+-              type: state_map
+-              map:
+-                "on": 1
+-                "off": 0
+-            huawei_to_ha:
+-              type: state_map
+-              map:
+-                "0": "off"
+-                "1": "on"
+-
+-      - sid: brightness
+-        fields:
+-          brightness:
+-            entity_id: light.REPLACE_WITH_LIVING_ROOM_LIGHT
+-            source: attribute
+-            attribute: brightness
+-
+-      - sid: cct
+-        fields:
+-          colorTemperature:
+-            entity_id: light.REPLACE_WITH_LIVING_ROOM_LIGHT
+-            source: attribute
+-            attribute: color_temp_kelvin
+-
+-      - sid: colour
+-        fields:
+-          red:
+-            entity_id: light.REPLACE_WITH_LIVING_ROOM_LIGHT
+-            source: attribute
+-            attribute: rgb_color
+-            component: red
+-          green:
+-            entity_id: light.REPLACE_WITH_LIVING_ROOM_LIGHT
+-            source: attribute
+-            attribute: rgb_color
+-            component: green
+-          blue:
+-            entity_id: light.REPLACE_WITH_LIVING_ROOM_LIGHT
+-            source: attribute
+-            attribute: rgb_color
+-            component: blue
+--- a/custom_components/oneconnect_bridge/ha_adapter.py
++++ b/custom_components/oneconnect_bridge/ha_adapter.py
+@@ -184,6 +184,23 @@
+         return
+     if binding.field_name == "on":
+         is_on = value not in (None, False, 0, "0", "off", "false")
++        if domain == "vacuum":
++            from homeassistant.components.vacuum import VacuumEntityFeature
++
++            state = hass.states.get(binding.entity_id)
++            features = state.attributes.get("supported_features", 0) if state else 0
++            if is_on and features & VacuumEntityFeature.START:
++                service = "start"
++            elif not is_on and features & VacuumEntityFeature.RETURN_HOME:
++                service = "return_to_base"
++            elif not is_on and features & VacuumEntityFeature.STOP:
++                service = "stop"
++            else:
++                raise ValueError("Vacuum does not advertise the requested cleaning action")
++            await hass.services.async_call(
++                "vacuum", service, {"entity_id": binding.entity_id}, blocking=True
++            )
++            return
+         if domain == "lock":
+             service = "lock" if is_on else "unlock"
+             _LOGGER.debug(
+--- a/custom_components/oneconnect_bridge/strings.json
++++ b/custom_components/oneconnect_bridge/strings.json
+@@ -5,7 +5,8 @@
+         "title": "Add OneConnect Bridge gateway",
+         "description": "Select the IPv4 network interface for Huawei LAN pairing. Enter the 8-digit PIN manually in Huawei Smart Life during pairing.",
+         "data": {
+-          "interface_ip": "Pairing network IPv4 address"
++          "interface_ip": "Pairing network IPv4 address",
++          "mac": "Interface MAC address (if automatic detection is unavailable)"
+         }
+       },
+       "init": {
+@@ -35,7 +36,8 @@
+       "interface": {
+         "title": "Select pairing network interface",
+         "data": {
+-          "interface_ip": "Pairing network IPv4 address"
++          "interface_ip": "Pairing network IPv4 address",
++          "mac": "Interface MAC address (if automatic detection is unavailable)"
+         }
+       },
+       "add_entities": {
+--- a/custom_components/oneconnect_bridge/translations/zh-Hans.json
++++ b/custom_components/oneconnect_bridge/translations/zh-Hans.json
+@@ -5,7 +5,8 @@
+         "title": "添加 OneConnect Bridge 网关",
+         "description": "选择用于华为局域网配对的 IPv4 网卡。配对时请在华为智慧生活中手动输入 8 位 PIN。",
+         "data": {
+-          "interface_ip": "配对网卡 IPv4 地址"
++          "interface_ip": "配对网卡 IPv4 地址",
++          "mac": "网卡 MAC 地址（无法自动读取时填写）"
+         }
+       },
+       "init": {
+@@ -35,7 +36,8 @@
+       "interface": {
+         "title": "选择配对网卡",
+         "data": {
+-          "interface_ip": "配对网卡 IPv4 地址"
++          "interface_ip": "配对网卡 IPv4 地址",
++          "mac": "网卡 MAC 地址（无法自动读取时填写）"
+         }
+       },
+       "add_entities": {

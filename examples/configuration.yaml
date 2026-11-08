@@ -1,0 +1,22 @@
+# Minimal Android-friendly starting configuration; merge, never overwrite existing config.
+frontend:
+config:
+history:
+logbook:
+media_source:
+my:
+ssdp:
+zeroconf:
+homeassistant:
+  name: 智能音箱桥接
+  time_zone: Asia/Shanghai
+  unit_system: metric
+http:
+  server_host: 0.0.0.0
+  server_port: 8123
+input_boolean:
+  bridge_test:
+    name: 联动测试
+scene: !include scenes.yaml
+logger:
+  default: warning

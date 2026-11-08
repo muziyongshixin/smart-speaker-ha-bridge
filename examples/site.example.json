@@ -1,0 +1,9 @@
+{
+  "phone_serial": "REPLACE_LOCALLY",
+  "phone_ip": "REPLACE_LOCALLY",
+  "wifi_mac": "REPLACE_LOCALLY",
+  "xiaomi_home": "SELECT_ONE_HOME",
+  "living_room_ac": "climate.REPLACE",
+  "temperature_sensor": "sensor.REPLACE",
+  "humidity_sensor": "sensor.REPLACE"
+}

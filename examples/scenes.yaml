@@ -1,0 +1,15 @@
+# Replace climate.living_room_ac with your actual entity_id before loading.
+- id: living_room_heat_28
+  name: 客厅制热
+  icon: mdi:fire
+  entities:
+    climate.living_room_ac:
+      state: heat
+      temperature: 28
+- id: living_room_cool_26
+  name: 客厅制冷
+  icon: mdi:snowflake
+  entities:
+    climate.living_room_ac:
+      state: cool
+      temperature: 26

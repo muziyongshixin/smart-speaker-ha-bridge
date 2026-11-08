@@ -1,0 +1,68 @@
+--- a/custom_components/bemfa_cloud/sync_sensor.py
++++ b/custom_components/bemfa_cloud/sync_sensor.py
+@@ -45,24 +45,29 @@
+         ]
+ 
+     def get_watched_entity_ids(self) -> list[str]:
+-        return [self._entity_id]
++        return list(dict.fromkeys([
++            self._entity_id,
++            *(self._config[key] for key in ("temperature", "humidity")
++              if self._config.get(key)),
++        ]))
+ 
+     def _generate_msg_payload(self) -> dict[str, Any]:
+-        state = self._hass.states.get(self._entity_id)
+-        if state is None or state.state in UNPUBLISHABLE_STATES:
+-            return {}
+-
+-        payload_name = self._payload_name(state.attributes)
+-        if payload_name is None:
+-            return {}
+-
+-        try:
+-            value: Any = float(state.state)
+-            if value.is_integer():
+-                value = int(value)
+-        except ValueError:
+-            value = state.state
+-        return {payload_name: value}
++        payload: dict[str, Any] = {}
++        for entity_id in self.get_watched_entity_ids():
++            state = self._hass.states.get(entity_id)
++            if state is None or state.state in UNPUBLISHABLE_STATES:
++                continue
++            payload_name = self._payload_name(state.attributes)
++            if payload_name is None:
++                continue
++            try:
++                value: Any = float(state.state)
++                if value.is_integer():
++                    value = int(value)
++            except ValueError:
++                value = state.state
++            payload[payload_name] = value
++        return payload
+ 
+     @staticmethod
+     def _payload_name(attributes: dict[str, Any]) -> str | None:
+--- a/custom_components/bemfa_cloud/sync_binary_sensor.py
++++ b/custom_components/bemfa_cloud/sync_binary_sensor.py
+@@ -5,7 +5,7 @@
+ from homeassistant.core import HomeAssistant
+ from homeassistant.components.binary_sensor import DOMAIN
+ from .const import TopicSuffix
+-from .sync import SYNC_TYPES, Sync
++from .sync import SYNC_TYPES, Sync, UNPUBLISHABLE_STATES
+ 
+ 
+ @SYNC_TYPES.register("binary_sensor")
+@@ -32,7 +32,7 @@
+ 
+     def _generate_msg_payload(self) -> dict[str, bool]:
+         state = self._hass.states.get(self._entity_id)
+-        if state is None:
++        if state is None or state.state in UNPUBLISHABLE_STATES:
+             return {}
+ 
+         return {"on": state.state == STATE_ON}
