@@ -8,6 +8,10 @@
 
 [观看原始实拍视频（22 秒，含音轨）](docs/media/demo.mp4) · [完整复现步骤](docs/REPRODUCE.md) · [Agent Prompt](prompts/REPRODUCE.md) · [已知问题](docs/KNOWN_ISSUES.md)
 
+## 实践文章
+
+[知乎：一台闲置小米 5X，让小度、华为 Sound SE 和 HomePod mini 都能控制米家](https://zhuanlan.zhihu.com/p/2102867147277996560)
+
 ## 系统架构
 
 ![三平台系统架构](docs/media/architecture.png)
