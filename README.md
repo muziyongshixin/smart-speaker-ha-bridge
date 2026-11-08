@@ -1,6 +1,6 @@
-# 旧手机 + Home Assistant：小度 / 华为 Sound SE 控制米家
+# 旧手机 + Home Assistant：小度 / 华为 Sound SE / HomePod mini 控制米家
 
-把闲置 Android 手机变成家庭桥接主机，让现有小度与华为 Sound SE 控制米家设备。无需刷音箱、无需替换 Android。项目提供真实部署经验、Agent 复现 prompt、运行脚本、兼容补丁及实拍演示。
+把闲置 Android 手机变成家庭桥接主机，让小度、华为 Sound SE 和 HomePod mini 控制米家设备。无需刷音箱、无需替换 Android。项目提供真实部署经验、Agent 复现 prompt、运行脚本、兼容补丁及实拍演示。
 
 > 这是已验证案例的可复现资料包，不是 clone 后无需授权即可运行的一键安装器。每个家庭仍需自己的账号授权、设备映射和硬件验证。音乐投放尚未实现。
 
@@ -10,10 +10,15 @@
 
 ## 系统架构
 
+![三平台系统架构](docs/media/architecture.png)
+
 ```mermaid
 flowchart TB
   U[用户语音] --> D[小度智能音箱]
   U --> H[华为 Sound SE / 小艺]
+  U --> AP[HomePod mini / Siri]
+  AP --> AH[Apple 家庭：房间、名称、灯具类别]
+  AH <--> HK[HomeKit Bridge：局域网配对]
   D --> DC[小度云 / 巴法技能]
   DC <--> B[巴法云]
   H --> HC[华为智慧生活云]
@@ -22,6 +27,7 @@ flowchart TB
   subgraph PHONE[闲置安卓手机：Termux + PRoot / udocker]
     BC <--> HA[Home Assistant]
     OC <--> HA
+    HK <--> HA
     HA --> SC[场景：暖冬 28℃ / 清凉 26℃]
     SC --> X[Xiaomi Home 集成]
     HA <--> X
@@ -44,7 +50,13 @@ flowchart TB
 | Huawei 暖冬 | 用户语音验证成功，客厅制热 28℃ |
 | Huawei 清凉 | 已配置制冷 26℃，未做实物验证 |
 | 批量映射 | 案例为 21 个真实控制入口 + 1 测试 + 2 场景；没有逐个实物验收 |
+| HomePod mini → HomeKit Bridge → HA | 28 个实体已生成配件；虚拟开关、真实客厅灯已实测 |
+| Siri 按房间关灯 | 客厅三盏灯同时关闭，其他房间不受影响，用户确认通过 |
 | 免费音乐 / DLNA | 仅研究，未部署，不列为已完成 |
+
+## Apple 家庭与房间管理
+
+新增完整指南：[HomePod mini 接入与按房间控制](docs/HOMEKIT.md)。HA 房间不会自动同步到 Apple 家庭，必须在家庭 App 中分房间；开关形式接入的灯需要设置“显示为：灯”。本案例 HomePod 位于书房。
 
 ## 快速开始：让 Agent 带你复现
 
@@ -65,6 +77,7 @@ cd smart-speaker-ha-bridge
 - 小艺小艺，打开暖冬。
 - 小艺小艺，打开清凉。（已配置，未实测）
 - 小艺小艺，关闭客厅空调电源。
+- 嘿 Siri，关闭客厅所有的灯。（客厅吸顶灯、氛围灯、鱼缸灯均关闭；其他房间未受影响，已实测）
 
 “打开客厅制热”曾被小艺识别成原生空调模式命令并失败；改名“暖冬”后成功。普通空调映射只提供电源控制，温度与模式由 HA 场景组合完成。
 
